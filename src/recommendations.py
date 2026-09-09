@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+F1_DROP_TOLERE = 0.03
 
 @dataclass
 class DriftDiagnosis:
@@ -28,19 +29,62 @@ def diagnose_drift_type(d: DriftDiagnosis) -> str:
     Le verdict final se construit en croisant features, AUC, calibration et
     temporalité — et doit énoncer ce qui manquerait pour trancher.
     """
-    # TODO 1 — traduire la matrice du mini-cours 02 :
-    #   features dérivent + AUC stable → ... ; features stables + AUC
-    #   dégradée → ... ; sinon → "mixte".
-    raise NotImplementedError
+    features_derivent = d.n_features_drift > 0
+    if features_derivent and d.auc_stable:
+        return "data drift"
+    if not features_derivent and not d.auc_stable:
+        return "concept drift"
+    if features_derivent and not d.auc_stable:
+        return "mixte"
+    return "pas de signal"
 
 
 def recommend(d: DriftDiagnosis) -> dict[str, str]:
     """Recommande une action proportionnée au diagnostic.
-
+ 
     Returns:
         dict avec les clés : action / justification / urgence / drift_type.
     """
-    # TODO 2 — décliner au moins 3 issues distinctes (surveiller / ajuster /
-    #   réentraîner), chacune avec une justification en langage métier.
-    #   C'est cette fonction qui alimente votre note de recommandation.
-    raise NotImplementedError
+    drift_type = diagnose_drift_type(d)
+ 
+    if drift_type == "concept drift" or (drift_type == "mixte" and d.f1_drop > F1_DROP_TOLERE):
+        action = "Réentraîner en urgence et investiguer la cause"
+        justification = (
+            "Le modèle ne classe plus aussi bien : la logique de risque elle-même "
+            f"semble avoir changé (F1 -{d.f1_drop:.2f}). Attendre aggrave la perte."
+        )
+        urgence = "sous 1 semaine"
+    elif drift_type == "data drift" and (d.calibration_degraded or d.f1_drop > F1_DROP_TOLERE):
+        action = "Réentraîner sur données récentes"
+        justification = (
+            "Le modèle trie toujours correctement les dossiers, mais la clientèle "
+            "entrante a changé : les probabilités annoncées ne sont plus fiables. "
+            "Un réentraînement les recale sans revoir l'architecture."
+        )
+        urgence = "sous 3 semaines"
+    elif drift_type == "data drift":
+        action = "Surveiller, sans réentraîner"
+        justification = (
+            "Les données entrantes ont bougé, mais ni le tri des dossiers ni la "
+            "fiabilité des probabilités n'en souffrent à ce stade. Réentraîner "
+            "coûterait sans bénéfice mesurable."
+        )
+        urgence = "revue mensuelle"
+    elif drift_type == "mixte":
+        action = "Ajuster le seuil de décision et resserrer la surveillance"
+        justification = (
+            "La performance bouge mais reste dans la tolérance : un ajustement de "
+            "seuil coûte quelques heures là où un réentraînement coûte des jours."
+        )
+        urgence = "sous 4 semaines"
+    else:
+        action = "Aucune action, maintenir la surveillance en place"
+        justification = "Aucun signal statistique significatif sur la période observée."
+        urgence = "revue trimestrielle"
+ 
+    return {
+        "action": action,
+        "justification": justification,
+        "urgence": urgence,
+        "drift_type": drift_type,
+    }
